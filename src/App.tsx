@@ -15,11 +15,16 @@ import {
   Info,
   Loader2,
   ChevronRight,
-  Umbrella
+  Umbrella,
+  Search,
+  Star,
+  ThumbsUp,
+  ThumbsDown,
+  X
 } from 'lucide-react';
 import { format, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { getBeachRecommendations, Beach, WindForecast } from './lib/gemini';
+import { getBeachRecommendations, Beach, WindForecast, analyzeSpecificBeach, BeachAnalysis, generateBeachImage } from './lib/gemini';
 import { cn } from './lib/utils';
 
 export default function App() {
@@ -27,6 +32,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<{ wind: WindForecast; beaches: Beach[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Search states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResult, setSearchResult] = useState<{ wind: WindForecast; analysis: BeachAnalysis; beachName: string; imageUrl?: string } | null>(null);
 
   const fetchRecommendations = async (date: Date) => {
     setLoading(true);
@@ -34,12 +44,39 @@ export default function App() {
     try {
       const formattedDate = format(date, 'yyyy-MM-dd');
       const result = await getBeachRecommendations(formattedDate);
-      setData(result);
+      
+      // Fetch images for each beach in parallel
+      const beachesWithImages = await Promise.all(
+        result.beaches.map(async (beach: Beach) => {
+          const imageUrl = await generateBeachImage(beach.name, beach.location);
+          return { ...beach, imageUrl };
+        })
+      );
+      
+      setData({ ...result, beaches: beachesWithImages });
     } catch (err) {
       console.error(err);
       setError("Impossibile recuperare le previsioni. Riprova più tardi.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    setSearchLoading(true);
+    try {
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const result = await analyzeSpecificBeach(searchQuery, formattedDate);
+      const imageUrl = await generateBeachImage(searchQuery, "Sardegna");
+      setSearchResult({ ...result, beachName: searchQuery, imageUrl });
+    } catch (err) {
+      console.error(err);
+      setError("Errore durante la ricerca della spiaggia.");
+    } finally {
+      setSearchLoading(false);
     }
   };
 
@@ -87,7 +124,7 @@ export default function App() {
             </p>
 
             {/* Date Selector */}
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-3 mb-8">
               {dates.map((date) => {
                 const isSelected = format(date, 'yyyy-MM-dd') === format(selectedDate, 'yyyy-MM-dd');
                 return (
@@ -106,8 +143,92 @@ export default function App() {
                 );
               })}
             </div>
+
+            {/* Search Bar */}
+            <form onSubmit={handleSearch} className="relative max-w-md group">
+              <input
+                type="text"
+                placeholder="Cerca una spiaggia specifica..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-12 pr-4 py-4 bg-white border border-[#1A1A1A]/10 rounded-2xl focus:outline-none focus:ring-2 focus:ring-[#1A1A1A]/5 focus:border-[#1A1A1A]/20 transition-all text-sm"
+              />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 opacity-30 group-focus-within:opacity-100 transition-opacity" size={18} />
+              <button 
+                type="submit"
+                disabled={searchLoading}
+                className="absolute right-2 top-1/2 -translate-y-1/2 bg-[#1A1A1A] text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#333] transition-colors disabled:opacity-50"
+              >
+                {searchLoading ? <Loader2 className="animate-spin" size={14} /> : "Cerca"}
+              </button>
+            </form>
           </motion.div>
         </section>
+
+        {/* Search Result Overlay/Section */}
+        <AnimatePresence>
+          {searchResult && (
+            <motion.section 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="mb-16 p-8 bg-[#F5F2ED] rounded-[3rem] border-2 border-[#1A1A1A]/5 relative overflow-hidden"
+            >
+              <button 
+                onClick={() => setSearchResult(null)}
+                className="absolute top-6 right-6 w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-sm hover:bg-red-50 hover:text-red-500 transition-colors z-10"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+                <div className="relative aspect-video rounded-3xl overflow-hidden shadow-2xl">
+                  <img 
+                    src={searchResult.imageUrl} 
+                    alt={searchResult.beachName}
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-8">
+                    <h3 className="text-3xl font-serif text-white">{searchResult.beachName}</h3>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className={cn(
+                      "px-4 py-2 rounded-2xl flex items-center gap-2 font-bold text-sm uppercase tracking-wider",
+                      searchResult.analysis.recommendation.toLowerCase().includes('consigliata') 
+                        ? "bg-green-100 text-green-700" 
+                        : "bg-red-100 text-red-700"
+                    )}>
+                      {searchResult.analysis.recommendation.toLowerCase().includes('consigliata') ? <ThumbsUp size={16} /> : <ThumbsDown size={16} />}
+                      {searchResult.analysis.recommendation}
+                    </div>
+                    <div className="flex items-center gap-1 bg-white px-4 py-2 rounded-2xl shadow-sm">
+                      <Star size={16} className="text-yellow-500 fill-yellow-500" />
+                      <span className="font-bold text-lg">{searchResult.analysis.score}</span>
+                      <span className="text-xs opacity-40 font-bold">/10</span>
+                    </div>
+                  </div>
+
+                  <h4 className="text-sm font-bold uppercase tracking-widest opacity-40 mb-3">Analisi dell'esperto</h4>
+                  <p className="text-lg leading-relaxed mb-6 italic font-serif">
+                    "{searchResult.analysis.reason}"
+                  </p>
+
+                  <div className="p-4 bg-white/50 rounded-2xl border border-[#1A1A1A]/5">
+                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest opacity-50 mb-2">
+                      <Wind size={14} />
+                      <span>Condizioni Vento</span>
+                    </div>
+                    <p className="text-sm font-medium">{searchResult.wind.direction} • {searchResult.wind.speed}</p>
+                  </div>
+                </div>
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         {/* Content */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
@@ -232,33 +353,48 @@ export default function App() {
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.1 }}
-                      className="group relative bg-white p-8 rounded-[2rem] border border-[#1A1A1A]/5 hover:border-[#1A1A1A]/20 transition-all duration-500 hover:shadow-xl hover:shadow-[#1A1A1A]/5"
+                      className="group relative bg-white rounded-[2rem] border border-[#1A1A1A]/5 hover:border-[#1A1A1A]/20 transition-all duration-500 hover:shadow-xl hover:shadow-[#1A1A1A]/5 overflow-hidden"
                     >
-                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 text-[#1A1A1A]/40 mb-3">
-                            <MapPin size={14} />
-                            <span className="text-[11px] font-bold uppercase tracking-widest">{beach.location}</span>
-                          </div>
-                          <h4 className="text-3xl font-serif mb-4 group-hover:text-[#1A1A1A] transition-colors">{beach.name}</h4>
-                          <p className="text-sm leading-relaxed opacity-60 mb-6 max-w-xl">
-                            {beach.description}
-                          </p>
-                          
-                          <div className="flex flex-wrap gap-4">
-                            <div className="flex items-center gap-2 px-4 py-2 bg-[#F5F2ED] rounded-xl text-[11px] font-bold uppercase tracking-wider text-[#1A1A1A]/70">
-                              <Umbrella size={14} />
-                              <span>{beach.whySheltered}</span>
-                            </div>
-                          </div>
+                      <div className="flex flex-col md:flex-row">
+                        {/* Beach Image */}
+                        <div className="md:w-1/3 relative h-48 md:h-auto overflow-hidden">
+                          <img 
+                            src={beach.imageUrl} 
+                            alt={beach.name}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors" />
                         </div>
-                        
-                        <div className="flex flex-col items-end justify-between self-stretch">
-                          <button className="w-12 h-12 rounded-full border border-[#1A1A1A]/10 flex items-center justify-center group-hover:bg-[#1A1A1A] group-hover:text-white transition-all duration-300">
-                            <Navigation size={18} />
-                          </button>
-                          <div className="hidden md:block text-[10px] font-black opacity-5 tracking-tighter leading-none select-none">
-                            0{index + 1}
+
+                        <div className="flex-1 p-8">
+                          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 text-[#1A1A1A]/40 mb-3">
+                                <MapPin size={14} />
+                                <span className="text-[11px] font-bold uppercase tracking-widest">{beach.location}</span>
+                              </div>
+                              <h4 className="text-3xl font-serif mb-4 group-hover:text-[#1A1A1A] transition-colors">{beach.name}</h4>
+                              <p className="text-sm leading-relaxed opacity-60 mb-6 max-w-xl">
+                                {beach.description}
+                              </p>
+                              
+                              <div className="flex flex-wrap gap-4">
+                                <div className="flex items-center gap-2 px-4 py-2 bg-[#F5F2ED] rounded-xl text-[11px] font-bold uppercase tracking-wider text-[#1A1A1A]/70">
+                                  <Umbrella size={14} />
+                                  <span>{beach.whySheltered}</span>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="flex flex-col items-end justify-between self-stretch">
+                              <button className="w-12 h-12 rounded-full border border-[#1A1A1A]/10 flex items-center justify-center group-hover:bg-[#1A1A1A] group-hover:text-white transition-all duration-300">
+                                <Navigation size={18} />
+                              </button>
+                              <div className="hidden md:block text-[10px] font-black opacity-5 tracking-tighter leading-none select-none">
+                                0{index + 1}
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
