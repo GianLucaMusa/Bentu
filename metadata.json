@@ -1,0 +1,5 @@
+{
+  "name": "Sardegna Vento & Spiagge",
+  "description": "Trova le spiagge più riparate in Sardegna in base alle previsioni del vento.",
+  "requestFramePermissions": ["geolocation"]
+}
