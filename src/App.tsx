@@ -25,16 +25,18 @@ import {
 } from 'lucide-react';
 import { format, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { getBeachRecommendations, Beach, WindForecast, analyzeSpecificBeach, BeachAnalysis, generateBeachImage } from './lib/gemini';
+import { getBeachRecommendations, Beach, WindForecast, analyzeSpecificBeach, BeachAnalysis, generateBeachImage, isRateLimited } from './lib/gemini';
 import { cn } from './lib/utils';
 
 export default function App() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [loading, setLoading] = useState(false);
+  const [rateLimitActive, setRateLimitActive] = useState(false);
   const [data, setData] = useState<{ wind: WindForecast; beaches: Beach[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   
-  // Search states
+  // Track last fetched date to avoid redundant UI loading
+  const [lastFetchedDate, setLastFetchedDate] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResult, setSearchResult] = useState<{ wind: WindForecast; analysis: BeachAnalysis; beachName: string; imageUrl?: string } | null>(null);
@@ -74,26 +76,34 @@ export default function App() {
   const isFavorite = (beachName: string) => favorites.some(f => f.name === beachName);
 
   const fetchRecommendations = async (date: Date) => {
+    const formattedDate = format(date, 'yyyy-MM-dd');
+    
+    // Skip if already showing this date's data
+    if (formattedDate === lastFetchedDate && data) return;
+
     setLoading(true);
     setError(null);
+    
+    // Check if we are about to be rate limited
+    if (isRateLimited) setRateLimitActive(true);
+
     try {
-      const formattedDate = format(date, 'yyyy-MM-dd');
       const result = await getBeachRecommendations(formattedDate);
       
-      // Fetch images for each beach in parallel
-      const beachesWithImages = await Promise.all(
-        result.beaches.map(async (beach: Beach) => {
-          const imageUrl = await generateBeachImage(beach.name, beach.location);
-          return { ...beach, imageUrl };
-        })
-      );
+      // Optimization: Images are now zero-cost placeholders, no need for parallel AI calls
+      const beachesWithImages = result.beaches.map((beach: Beach) => ({
+        ...beach,
+        imageUrl: `https://picsum.photos/seed/${beach.name.replace(/\s/g, '')}/800/450`
+      }));
       
       setData({ ...result, beaches: beachesWithImages });
+      setLastFetchedDate(formattedDate);
     } catch (err) {
       console.error(err);
       setError("Impossibile recuperare le previsioni. Riprova più tardi.");
     } finally {
       setLoading(false);
+      setRateLimitActive(false);
     }
   };
 
@@ -102,10 +112,12 @@ export default function App() {
     if (!searchQuery.trim()) return;
 
     setSearchLoading(true);
+    if (isRateLimited) setRateLimitActive(true);
+
     try {
       const formattedDate = format(selectedDate, 'yyyy-MM-dd');
       const result = await analyzeSpecificBeach(searchQuery, formattedDate);
-      const imageUrl = await generateBeachImage(searchQuery, "Sardegna");
+      const imageUrl = `https://picsum.photos/seed/${searchQuery.replace(/\s/g, '')}/800/450`;
       setSearchResult({ ...result, beachName: searchQuery, imageUrl });
     } catch (err) {
       console.error(err);
@@ -305,7 +317,12 @@ export default function App() {
                   className="p-8 rounded-3xl bg-[#F5F2ED] border border-[#1A1A1A]/5 flex flex-col items-center justify-center min-h-[300px]"
                 >
                   <Loader2 className="animate-spin mb-4 opacity-20" size={32} />
-                  <p className="text-sm font-medium opacity-40 uppercase tracking-widest">Analisi venti...</p>
+                  <p className="text-sm font-medium opacity-40 uppercase tracking-widest text-center">
+                    {rateLimitActive ? "Raffreddamento API..." : "Analisi venti..."}
+                  </p>
+                  {rateLimitActive && (
+                    <p className="text-[10px] mt-2 opacity-30 text-center">Stiamo gestendo il limite di 15 richieste/min</p>
+                  )}
                 </motion.div>
               ) : data ? (
                 <motion.div
@@ -483,7 +500,15 @@ export default function App() {
   );
 }
 
-function BeachCard({ beach, index, isFav, onToggleFav }: { beach: Beach, index: number, isFav: boolean, onToggleFav: () => void }) {
+interface BeachCardProps {
+  key?: string | number;
+  beach: Beach;
+  index: number;
+  isFav: boolean;
+  onToggleFav: () => void;
+}
+
+function BeachCard({ beach, index, isFav, onToggleFav }: BeachCardProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}

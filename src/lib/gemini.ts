@@ -2,7 +2,35 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const CACHE_EXPIRATION_MS = 4 * 60 * 60 * 1000; // 4 hours
+// Request Limiter to stay within 15 requests per minute
+class RequestLimiter {
+  private requests: number[] = [];
+  private readonly LIMIT = 14; // Slightly below 15 for safety
+  private readonly WINDOW_MS = 60 * 1000;
+
+  async checkLimit(): Promise<void> {
+    const now = Date.now();
+    this.requests = this.requests.filter(timestamp => now - timestamp < this.WINDOW_MS);
+    
+    if (this.requests.length >= this.LIMIT) {
+      const oldest = this.requests[0];
+      const waitTime = this.WINDOW_MS - (now - oldest);
+      isRateLimited = true;
+      console.warn(`Rate limit approaching. Waiting ${Math.ceil(waitTime / 1000)}s...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime + 100));
+      isRateLimited = false;
+      return this.checkLimit();
+    }
+    
+    this.requests.push(now);
+  }
+}
+
+const limiter = new RequestLimiter();
+
+export let isRateLimited = false;
+
+const CACHE_EXPIRATION_MS = 24 * 60 * 60 * 1000; // 24 hours for forecast data
 
 interface CacheItem<T> {
   data: T;
@@ -62,6 +90,7 @@ export async function getBeachRecommendations(date: string) {
   const cached = getFromCache<{ wind: WindForecast; beaches: Beach[] }>(cacheKey);
   if (cached) return cached;
 
+  await limiter.checkLimit();
   const model = "gemini-3-flash-preview";
   
   const prompt = `Sei un esperto di spiagge della Sardegna. 
@@ -117,34 +146,8 @@ export async function getBeachRecommendations(date: string) {
 }
 
 export async function generateBeachImage(beachName: string, location: string) {
-  const cacheKey = `image-${beachName.replace(/\s/g, '-')}`;
-  const cached = getFromCache<string>(cacheKey);
-  if (cached) return cached;
-
-  const model = "gemini-2.5-flash-image";
-  const prompt = `A stunning, high-quality photograph of the beach "${beachName}" in ${location}, Sardinia. Crystal clear turquoise water, white sand, Mediterranean scrub, sunny day, cinematic lighting, professional travel photography.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        imageConfig: {
-          aspectRatio: "16:9",
-        },
-      },
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        const imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-        saveToCache(cacheKey, imageUrl);
-        return imageUrl;
-      }
-    }
-  } catch (error) {
-    console.error("Error generating image:", error);
-  }
+  // Optimization: Use a high-quality placeholder by default to save API quota.
+  // This is a zero-cost operation (no API calls).
   return `https://picsum.photos/seed/${beachName.replace(/\s/g, '')}/800/450`;
 }
 
@@ -153,6 +156,7 @@ export async function analyzeSpecificBeach(beachName: string, date: string): Pro
   const cached = getFromCache<{ wind: WindForecast; analysis: BeachAnalysis }>(cacheKey);
   if (cached) return cached;
 
+  await limiter.checkLimit();
   const model = "gemini-3-flash-preview";
   
   const prompt = `Sei un esperto di spiagge della Sardegna. 
