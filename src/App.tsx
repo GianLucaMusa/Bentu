@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { format, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { getBeachRecommendations, Beach, WindForecast, analyzeSpecificBeach, BeachAnalysis, generateBeachImage, isRateLimited } from './lib/gemini';
+import { getBeachRecommendations, Beach, WindForecast, analyzeSpecificBeach, BeachAnalysis, generateBeachImage, isRateLimited, onRateLimitChange } from './lib/gemini';
 import { cn } from './lib/utils';
 
 export default function App() {
@@ -34,8 +34,11 @@ export default function App() {
   const [rateLimitActive, setRateLimitActive] = useState(false);
   const [data, setData] = useState<{ wind: WindForecast; beaches: Beach[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // Track last fetched date to avoid redundant UI loading
+
+  // Sync rate limit state from gemini service
+  useEffect(() => {
+    onRateLimitChange(setRateLimitActive);
+  }, []);
   const [lastFetchedDate, setLastFetchedDate] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
@@ -84,26 +87,33 @@ export default function App() {
     setLoading(true);
     setError(null);
     
-    // Check if we are about to be rate limited
-    if (isRateLimited) setRateLimitActive(true);
-
     try {
       const result = await getBeachRecommendations(formattedDate);
       
-      // Optimization: Images are now zero-cost placeholders, no need for parallel AI calls
-      const beachesWithImages = result.beaches.map((beach: Beach) => ({
-        ...beach,
-        imageUrl: `https://picsum.photos/seed/${beach.name.replace(/\s/g, '')}/800/450`
-      }));
+      // Fetch images for each beach. Use allSettled to prevent one failure from breaking everything.
+      const imageResults = await Promise.allSettled(
+        result.beaches.map((beach: Beach) => generateBeachImage(beach.name, beach.location))
+      );
+      
+      const beachesWithImages = result.beaches.map((beach: Beach, index: number) => {
+        const imageResult = imageResults[index];
+        const imageUrl = imageResult.status === 'fulfilled' 
+          ? imageResult.value 
+          : `https://picsum.photos/seed/${beach.name.replace(/\s/g, '')}/800/450`;
+        return { ...beach, imageUrl };
+      });
       
       setData({ ...result, beaches: beachesWithImages });
       setLastFetchedDate(formattedDate);
     } catch (err) {
       console.error(err);
-      setError("Impossibile recuperare le previsioni. Riprova più tardi.");
+      if (err instanceof Error && err.message.includes("quota")) {
+        setError("Limite di richieste raggiunto. L'app sta aspettando il reset della quota (circa 1 minuto).");
+      } else {
+        setError("Impossibile recuperare le previsioni. Riprova più tardi.");
+      }
     } finally {
       setLoading(false);
-      setRateLimitActive(false);
     }
   };
 
@@ -112,16 +122,19 @@ export default function App() {
     if (!searchQuery.trim()) return;
 
     setSearchLoading(true);
-    if (isRateLimited) setRateLimitActive(true);
 
     try {
       const formattedDate = format(selectedDate, 'yyyy-MM-dd');
       const result = await analyzeSpecificBeach(searchQuery, formattedDate);
-      const imageUrl = `https://picsum.photos/seed/${searchQuery.replace(/\s/g, '')}/800/450`;
+      const imageUrl = await generateBeachImage(searchQuery, "Sardegna");
       setSearchResult({ ...result, beachName: searchQuery, imageUrl });
     } catch (err) {
       console.error(err);
-      setError("Errore durante la ricerca della spiaggia.");
+      if (err instanceof Error && err.message.includes("quota")) {
+        setError("Limite di richieste raggiunto. Riprova tra un minuto.");
+      } else {
+        setError("Errore durante la ricerca della spiaggia.");
+      }
     } finally {
       setSearchLoading(false);
     }
