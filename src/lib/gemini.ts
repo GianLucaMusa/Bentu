@@ -2,6 +2,37 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+const CACHE_EXPIRATION_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+interface CacheItem<T> {
+  data: T;
+  timestamp: number;
+}
+
+function getFromCache<T>(key: string): T | null {
+  const cached = localStorage.getItem(`beach-cache-${key}`);
+  if (!cached) return null;
+
+  try {
+    const item: CacheItem<T> = JSON.parse(cached);
+    if (Date.now() - item.timestamp > CACHE_EXPIRATION_MS) {
+      localStorage.removeItem(`beach-cache-${key}`);
+      return null;
+    }
+    return item.data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveToCache<T>(key: string, data: T) {
+  const item: CacheItem<T> = {
+    data,
+    timestamp: Date.now()
+  };
+  localStorage.setItem(`beach-cache-${key}`, JSON.stringify(item));
+}
+
 export interface Beach {
   name: string;
   location: string;
@@ -27,6 +58,10 @@ export interface WindForecast {
 }
 
 export async function getBeachRecommendations(date: string) {
+  const cacheKey = `recommendations-${date}`;
+  const cached = getFromCache<{ wind: WindForecast; beaches: Beach[] }>(cacheKey);
+  if (cached) return cached;
+
   const model = "gemini-3-flash-preview";
   
   const prompt = `Sei un esperto di spiagge della Sardegna. 
@@ -76,10 +111,16 @@ export async function getBeachRecommendations(date: string) {
     }
   });
 
-  return JSON.parse(response.text);
+  const result = JSON.parse(response.text);
+  saveToCache(cacheKey, result);
+  return result;
 }
 
 export async function generateBeachImage(beachName: string, location: string) {
+  const cacheKey = `image-${beachName.replace(/\s/g, '-')}`;
+  const cached = getFromCache<string>(cacheKey);
+  if (cached) return cached;
+
   const model = "gemini-2.5-flash-image";
   const prompt = `A stunning, high-quality photograph of the beach "${beachName}" in ${location}, Sardinia. Crystal clear turquoise water, white sand, Mediterranean scrub, sunny day, cinematic lighting, professional travel photography.`;
 
@@ -96,7 +137,9 @@ export async function generateBeachImage(beachName: string, location: string) {
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
+        const imageUrl = `data:image/png;base64,${part.inlineData.data}`;
+        saveToCache(cacheKey, imageUrl);
+        return imageUrl;
       }
     }
   } catch (error) {
@@ -106,6 +149,10 @@ export async function generateBeachImage(beachName: string, location: string) {
 }
 
 export async function analyzeSpecificBeach(beachName: string, date: string): Promise<{ wind: WindForecast; analysis: BeachAnalysis }> {
+  const cacheKey = `analysis-${beachName.replace(/\s/g, '-')}-${date}`;
+  const cached = getFromCache<{ wind: WindForecast; analysis: BeachAnalysis }>(cacheKey);
+  if (cached) return cached;
+
   const model = "gemini-3-flash-preview";
   
   const prompt = `Sei un esperto di spiagge della Sardegna. 
@@ -151,5 +198,7 @@ export async function analyzeSpecificBeach(beachName: string, date: string): Pro
     }
   });
 
-  return JSON.parse(response.text);
+  const result = JSON.parse(response.text);
+  saveToCache(cacheKey, result);
+  return result;
 }
