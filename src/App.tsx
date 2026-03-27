@@ -20,7 +20,8 @@ import {
   Star,
   ThumbsUp,
   ThumbsDown,
-  X
+  X,
+  Heart
 } from 'lucide-react';
 import { format, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
@@ -37,6 +38,40 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResult, setSearchResult] = useState<{ wind: WindForecast; analysis: BeachAnalysis; beachName: string; imageUrl?: string } | null>(null);
+
+  // Favorites state
+  const [favorites, setFavorites] = useState<Beach[]>([]);
+  const [showFavorites, setShowFavorites] = useState(false);
+
+  // Load favorites from localStorage
+  useEffect(() => {
+    const savedFavorites = localStorage.getItem('sardegna-vento-favorites');
+    if (savedFavorites) {
+      try {
+        setFavorites(JSON.parse(savedFavorites));
+      } catch (e) {
+        console.error("Error loading favorites", e);
+      }
+    }
+  }, []);
+
+  // Save favorites to localStorage
+  useEffect(() => {
+    localStorage.setItem('sardegna-vento-favorites', JSON.stringify(favorites));
+  }, [favorites]);
+
+  const toggleFavorite = (beach: Beach) => {
+    setFavorites(prev => {
+      const isFavorite = prev.some(f => f.name === beach.name);
+      if (isFavorite) {
+        return prev.filter(f => f.name !== beach.name);
+      } else {
+        return [...prev, beach];
+      }
+    });
+  };
+
+  const isFavorite = (beachName: string) => favorites.some(f => f.name === beachName);
 
   const fetchRecommendations = async (date: Date) => {
     setLoading(true);
@@ -101,9 +136,15 @@ export default function App() {
             </div>
           </div>
           <div className="hidden md:flex items-center gap-6 text-sm font-medium opacity-70">
+            <button 
+              onClick={() => setShowFavorites(!showFavorites)}
+              className={cn("flex items-center gap-2 transition-all", showFavorites ? "text-red-500 opacity-100" : "hover:opacity-100")}
+            >
+              <Heart size={16} className={cn(showFavorites && "fill-red-500")} />
+              Preferiti ({favorites.length})
+            </button>
             <a href="#" className="hover:opacity-100 transition-opacity">Mappa</a>
             <a href="#" className="hover:opacity-100 transition-opacity">Venti</a>
-            <a href="#" className="hover:opacity-100 transition-opacity">Info</a>
           </div>
         </div>
       </header>
@@ -195,21 +236,41 @@ export default function App() {
                 </div>
 
                 <div>
-                  <div className="flex items-center gap-4 mb-6">
-                    <div className={cn(
-                      "px-4 py-2 rounded-2xl flex items-center gap-2 font-bold text-sm uppercase tracking-wider",
-                      searchResult.analysis.recommendation.toLowerCase().includes('consigliata') 
-                        ? "bg-green-100 text-green-700" 
-                        : "bg-red-100 text-red-700"
-                    )}>
-                      {searchResult.analysis.recommendation.toLowerCase().includes('consigliata') ? <ThumbsUp size={16} /> : <ThumbsDown size={16} />}
-                      {searchResult.analysis.recommendation}
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "px-4 py-2 rounded-2xl flex items-center gap-2 font-bold text-sm uppercase tracking-wider",
+                        searchResult.analysis.recommendation.toLowerCase().includes('consigliata') 
+                          ? "bg-green-100 text-green-700" 
+                          : "bg-red-100 text-red-700"
+                      )}>
+                        {searchResult.analysis.recommendation.toLowerCase().includes('consigliata') ? <ThumbsUp size={16} /> : <ThumbsDown size={16} />}
+                        {searchResult.analysis.recommendation}
+                      </div>
+                      <div className="flex items-center gap-1 bg-white px-4 py-2 rounded-2xl shadow-sm">
+                        <Star size={16} className="text-yellow-500 fill-yellow-500" />
+                        <span className="font-bold text-lg">{searchResult.analysis.score}</span>
+                        <span className="text-xs opacity-40 font-bold">/10</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 bg-white px-4 py-2 rounded-2xl shadow-sm">
-                      <Star size={16} className="text-yellow-500 fill-yellow-500" />
-                      <span className="font-bold text-lg">{searchResult.analysis.score}</span>
-                      <span className="text-xs opacity-40 font-bold">/10</span>
-                    </div>
+                    
+                    <button 
+                      onClick={() => toggleFavorite({
+                        name: searchResult.beachName,
+                        location: "Sardegna",
+                        description: searchResult.analysis.reason,
+                        whySheltered: searchResult.analysis.recommendation,
+                        imageUrl: searchResult.imageUrl
+                      })}
+                      className={cn(
+                        "w-12 h-12 rounded-full flex items-center justify-center transition-all border",
+                        isFavorite(searchResult.beachName) 
+                          ? "bg-red-50 border-red-200 text-red-500" 
+                          : "bg-white border-[#1A1A1A]/10 text-[#1A1A1A]/30 hover:text-red-500 hover:border-red-200"
+                      )}
+                    >
+                      <Heart size={20} className={cn(isFavorite(searchResult.beachName) && "fill-red-500")} />
+                    </button>
                   </div>
 
                   <h4 className="text-sm font-bold uppercase tracking-widest opacity-40 mb-3">Analisi dell'esperto</h4>
@@ -309,7 +370,48 @@ export default function App() {
           {/* Main List: Beaches */}
           <section className="lg:col-span-8">
             <AnimatePresence mode="wait">
-              {loading ? (
+              {showFavorites ? (
+                <motion.div 
+                  key="favorites-list"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="space-y-8"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-bold uppercase tracking-[0.3em] text-red-500">I Tuoi Preferiti</h3>
+                    <button 
+                      onClick={() => setShowFavorites(false)}
+                      className="text-[10px] font-bold px-3 py-1 bg-[#1A1A1A] text-white rounded-full uppercase tracking-widest"
+                    >
+                      Torna ai consigli
+                    </button>
+                  </div>
+
+                  {favorites.length === 0 ? (
+                    <div className="p-12 text-center bg-[#F5F2ED] rounded-[3rem] border border-dashed border-[#1A1A1A]/10">
+                      <Heart size={48} className="mx-auto mb-4 opacity-10" />
+                      <p className="text-lg font-serif italic opacity-40">Non hai ancora salvato nessuna spiaggia.</p>
+                      <button 
+                        onClick={() => setShowFavorites(false)}
+                        className="mt-6 text-sm font-bold underline"
+                      >
+                        Esplora le spiagge di oggi
+                      </button>
+                    </div>
+                  ) : (
+                    favorites.map((beach, index) => (
+                      <BeachCard 
+                        key={beach.name} 
+                        beach={beach} 
+                        index={index} 
+                        isFav={true} 
+                        onToggleFav={() => toggleFavorite(beach)} 
+                      />
+                    ))
+                  )}
+                </motion.div>
+              ) : loading ? (
                 <motion.div 
                   key="loading-beaches"
                   initial={{ opacity: 0 }}
@@ -348,57 +450,13 @@ export default function App() {
                   </div>
 
                   {data.beaches.map((beach, index) => (
-                    <motion.div
-                      key={beach.name}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                      className="group relative bg-white rounded-[2rem] border border-[#1A1A1A]/5 hover:border-[#1A1A1A]/20 transition-all duration-500 hover:shadow-xl hover:shadow-[#1A1A1A]/5 overflow-hidden"
-                    >
-                      <div className="flex flex-col md:flex-row">
-                        {/* Beach Image */}
-                        <div className="md:w-1/3 relative h-48 md:h-auto overflow-hidden">
-                          <img 
-                            src={beach.imageUrl} 
-                            alt={beach.name}
-                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors" />
-                        </div>
-
-                        <div className="flex-1 p-8">
-                          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 text-[#1A1A1A]/40 mb-3">
-                                <MapPin size={14} />
-                                <span className="text-[11px] font-bold uppercase tracking-widest">{beach.location}</span>
-                              </div>
-                              <h4 className="text-3xl font-serif mb-4 group-hover:text-[#1A1A1A] transition-colors">{beach.name}</h4>
-                              <p className="text-sm leading-relaxed opacity-60 mb-6 max-w-xl">
-                                {beach.description}
-                              </p>
-                              
-                              <div className="flex flex-wrap gap-4">
-                                <div className="flex items-center gap-2 px-4 py-2 bg-[#F5F2ED] rounded-xl text-[11px] font-bold uppercase tracking-wider text-[#1A1A1A]/70">
-                                  <Umbrella size={14} />
-                                  <span>{beach.whySheltered}</span>
-                                </div>
-                              </div>
-                            </div>
-                            
-                            <div className="flex flex-col items-end justify-between self-stretch">
-                              <button className="w-12 h-12 rounded-full border border-[#1A1A1A]/10 flex items-center justify-center group-hover:bg-[#1A1A1A] group-hover:text-white transition-all duration-300">
-                                <Navigation size={18} />
-                              </button>
-                              <div className="hidden md:block text-[10px] font-black opacity-5 tracking-tighter leading-none select-none">
-                                0{index + 1}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
+                    <BeachCard 
+                      key={beach.name} 
+                      beach={beach} 
+                      index={index} 
+                      isFav={isFavorite(beach.name)} 
+                      onToggleFav={() => toggleFavorite(beach)} 
+                    />
                   ))}
                 </motion.div>
               ) : null}
@@ -422,5 +480,87 @@ export default function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function BeachCard({ beach, index, isFav, onToggleFav }: { beach: Beach, index: number, isFav: boolean, onToggleFav: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.1 }}
+      className="group relative bg-white rounded-[2rem] border border-[#1A1A1A]/5 hover:border-[#1A1A1A]/20 transition-all duration-500 hover:shadow-xl hover:shadow-[#1A1A1A]/5 overflow-hidden"
+    >
+      <div className="flex flex-col md:flex-row">
+        {/* Beach Image */}
+        <div className="md:w-1/3 relative h-48 md:h-auto overflow-hidden">
+          <img 
+            src={beach.imageUrl} 
+            alt={beach.name}
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+            referrerPolicy="no-referrer"
+          />
+          <div className="absolute inset-0 bg-black/10 group-hover:bg-transparent transition-colors" />
+          
+          {/* Heart Icon Overlay for Mobile */}
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFav();
+            }}
+            className="absolute top-4 right-4 md:hidden w-10 h-10 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-red-500 shadow-sm"
+          >
+            <Heart size={18} className={cn(isFav && "fill-red-500")} />
+          </button>
+        </div>
+
+        <div className="flex-1 p-8">
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-[#1A1A1A]/40 mb-3">
+                <MapPin size={14} />
+                <span className="text-[11px] font-bold uppercase tracking-widest">{beach.location}</span>
+              </div>
+              <h4 className="text-3xl font-serif mb-4 group-hover:text-[#1A1A1A] transition-colors">{beach.name}</h4>
+              <p className="text-sm leading-relaxed opacity-60 mb-6 max-w-xl">
+                {beach.description}
+              </p>
+              
+              <div className="flex flex-wrap gap-4">
+                <div className="flex items-center gap-2 px-4 py-2 bg-[#F5F2ED] rounded-xl text-[11px] font-bold uppercase tracking-wider text-[#1A1A1A]/70">
+                  <Umbrella size={14} />
+                  <span>{beach.whySheltered}</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col items-end justify-between self-stretch gap-4">
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFav();
+                  }}
+                  className={cn(
+                    "w-12 h-12 rounded-full border flex items-center justify-center transition-all duration-300",
+                    isFav 
+                      ? "bg-red-50 border-red-100 text-red-500" 
+                      : "border-[#1A1A1A]/10 text-[#1A1A1A]/30 hover:text-red-500 hover:border-red-100"
+                  )}
+                >
+                  <Heart size={18} className={cn(isFav && "fill-red-500")} />
+                </button>
+                <button className="w-12 h-12 rounded-full border border-[#1A1A1A]/10 flex items-center justify-center group-hover:bg-[#1A1A1A] group-hover:text-white transition-all duration-300">
+                  <Navigation size={18} />
+                </button>
+              </div>
+              <div className="hidden md:block text-[10px] font-black opacity-5 tracking-tighter leading-none select-none">
+                0{index + 1}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
   );
 }
